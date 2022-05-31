@@ -142,6 +142,79 @@ func deleteUser(c *gin.Context) {
 	c.IndentedJSON(http.StatusOK, gin.H{"message": "User Deleted Successfully"})
 }
 
+func addTask(c *gin.Context) {
+	var newTask Task
+
+	if err := c.BindJSON(&newTask); err != nil {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+	ref, _, err := firestoreClient.Collection("tasks").Add(context.Background(), newTask)
+	if err != nil {
+		log.Fatalf("Failed adding user: %v", err)
+		return
+	}
+	_, err = firestoreClient.Collection("tasks").Doc(ref.ID).Set(context.Background(), map[string]interface{}{
+		"id":      ref.ID,
+		"name":    newTask.Name,
+		"members": []User{},
+	})
+	if err != nil {
+		log.Fatalf("Failed adding user: %v", err)
+		return
+	}
+
+	c.IndentedJSON(http.StatusCreated, gin.H{"message": "Task Added Succesfully"})
+}
+
+func addMember(c *gin.Context) {
+	id, iOk := c.Params.Get("id")
+	memberId, mOk := c.Params.Get("member")
+	if !iOk && !mOk {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "no task id and member id provided"})
+		return
+	}
+	if !iOk {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "no task id provided"})
+		return
+	}
+	if !mOk {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "no member id provided"})
+		return
+	}
+
+	_, err := firestoreClient.Collection("tasks").Doc(id).Update(context.Background(), []firestore.Update{
+		{
+			Path:  "members",
+			Value: memberId,
+		},
+	})
+	if err != nil {
+		log.Fatalf("Failed updating task: %v", err)
+		return
+	}
+
+	c.IndentedJSON(http.StatusOK, gin.H{"message": "Added Member"})
+}
+
+func getTasks(c *gin.Context) {
+	var tasks []interface{}
+	iter := firestoreClient.Collection("tasks").Documents(context.Background())
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			log.Fatalf("Failed to iterate: %v", err)
+		}
+
+		tasks = append(tasks, doc.Data())
+	}
+
+	c.IndentedJSON(http.StatusOK, tasks)
+}
+
 func init() {
 	opt := option.WithCredentialsFile("firebase.json")
 	app, err := firebase.NewApp(context.Background(), &firebase.Config{ProjectID: "go-test-api-b4c5d"}, opt)
@@ -161,10 +234,13 @@ func main() {
 	router := gin.Default()
 
 	router.GET("/users", getUsers)
+	router.GET("/tasks", getTasks)
 	router.POST("/users", addUser)
 	router.GET("/users/:id", userById)
 	router.PATCH("/users", patchUName)
 	router.DELETE("/users/:id", deleteUser)
+	router.POST("/tasks", addTask)
+	router.POST("/tasks/:id/:member", addMember)
 
 	router.Run("localhost:8080")
 }
